@@ -79,6 +79,8 @@ func main() {
 	mux.Handle("POST /students", handlers.TimeoutMiddleware(http.HandlerFunc(h.CreateStudent)))
 	mux.Handle("POST /enroll", handlers.TimeoutMiddleware(http.HandlerFunc(h.Enroll)))
 	mux.Handle("GET /metrics", promhttp.Handler())
+	mux.Handle("GET /health", http.HandlerFunc(h.Health))
+	mux.Handle("GET /ready", http.HandlerFunc(h.Ready))
 
 	srv := &http.Server{
 		Addr:    ":8080",

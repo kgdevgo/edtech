@@ -31,6 +31,7 @@ type EdtechRepository interface {
 	GetAllCourses(ctx context.Context) ([]models.Course, error)
 	CreateStudent(ctx context.Context, student *models.Student) error
 	Enroll(ctx context.Context, studentID, courseID string) error
+	Ping(ctx context.Context) error
 }
 
 type Handler struct {
@@ -173,5 +174,23 @@ func (h *Handler) GetCourses(w http.ResponseWriter, r *http.Request) {
 func respondJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		slog.Error("failed to encode response", "error", err)
+	}
+}
+
+func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
+}
+
+func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
+	if err := h.store.Ping(r.Context()); err != nil {
+		slog.Error("readiness probe failed: database unreachable", "error", err)
+		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }

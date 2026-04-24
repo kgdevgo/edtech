@@ -6,6 +6,7 @@ import (
 	"edtech-pg/internal/models"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/lib/pq"
 )
@@ -78,4 +79,11 @@ func (s *Storage) GetAllCourses(ctx context.Context) ([]models.Course, error) {
 	}
 
 	return courses, nil
+}
+
+func (s *Storage) Ping(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
+	defer cancel()
+
+	return s.db.PingContext(ctx)
 }
