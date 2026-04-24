@@ -189,12 +189,8 @@ Temporary Items
 
 # Go
 edtech-app
-*.exe
-*.test
 
 # IDE
 .idea/
 .vscode/
-
-# OS
-.DS_Store
+k8s/db-secret.yaml
