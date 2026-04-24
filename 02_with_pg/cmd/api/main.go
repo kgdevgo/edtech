@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -62,7 +63,11 @@ func main() {
 	}
 	defer kafkaWriter.Close()
 
-	go runEmailWorker(kafkaBroker, topicName)
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go runEmailWorker(workerCtx, &wg, kafkaBroker, topicName)
 
 	store := storage.New(db)
 	h := handlers.New(store, kafkaWriter)
@@ -100,6 +105,10 @@ func main() {
 		slog.Error("Server forced to shutdown:", "error", err)
 	}
 
+	slog.Info("Shutting down background workers...")
+	workerCancel()
+	wg.Wait()
+
 	if err := kafkaWriter.Close(); err != nil {
 		slog.Error("Failed to close writer", "error", err)
 	}
@@ -108,7 +117,9 @@ func main() {
 
 }
 
-func runEmailWorker(broker, topic string) {
+func runEmailWorker(ctx context.Context, wg *sync.WaitGroup, broker, topic string) {
+	defer wg.Done()
+
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{broker},
 		Topic:   topic,
@@ -119,8 +130,12 @@ func runEmailWorker(broker, topic string) {
 	slog.Info("Email worker started, waiting for messages...")
 
 	for {
-		msg, err := reader.ReadMessage(context.Background())
+		msg, err := reader.ReadMessage(ctx)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				slog.Info("Email worker gracefully stopped")
+				return
+			}
 			slog.Error("worker read error", "error", err)
 			break
 		}
