@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: edtech-app-deployment
+
+spec:
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app: edtech-backend
+
+  template:
+    metadata:
+      labels:
+        app: edtech-backend
+    spec:
+      containers:
+        - name: go-app
+          image: 02_with_pg-app:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_HOST
+              value: "postgres-service"
+            - name: DB_PORT
+              value: "5432"
+            - name: KAFKA_BROKER
+              value: "kafka-service:29092"
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: password

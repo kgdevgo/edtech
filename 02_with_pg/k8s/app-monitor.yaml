@@ -1,0 +1,13 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: edtech-app-monitor
+  labels:
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: edtech-backend
+  endpoints:
+    - port: http-web
+      path: /metrics
