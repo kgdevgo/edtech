@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"edtech-pg/internal/models"
+	"edtech-pg/internal/storage"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -17,12 +18,11 @@ import (
 )
 
 var (
-	enrollmentsTotal = promauto.NewCounterVec(
+	enrollmentsTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "edtech_enrollments_total",
 			Help: "Total number of successful enrollments",
 		},
-		[]string{"course_id"},
 	)
 )
 
@@ -121,7 +121,16 @@ func (h *Handler) Enroll(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Database timeout", http.StatusGatewayTimeout)
 			return
 		}
-		http.Error(w, "Invalid IDs", http.StatusBadRequest)
+		if errors.Is(err, storage.ErrDuplicate) {
+			http.Error(w, "Student is already enrolled in this course", http.StatusConflict)
+			return
+		}
+		if errors.Is(err, storage.ErrForeignKey) {
+			http.Error(w, "Student or Course does not exist", http.StatusBadRequest)
+			return
+		}
+
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -147,7 +156,7 @@ func (h *Handler) Enroll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusCreated, map[string]string{"status": "successfully enrolled"})
-	enrollmentsTotal.WithLabelValues(enroll.CourseID).Inc()
+	enrollmentsTotal.Inc()
 }
 
 func (h *Handler) GetCourses(w http.ResponseWriter, r *http.Request) {
