@@ -5,7 +5,6 @@ import (
 	"edtech-pg/internal/models"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -126,16 +125,25 @@ func (h *Handler) Enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	eventPayload := fmt.Sprintf(`{"student_id": "%s", "course_id": "%s"}`, enroll.StudentID, enroll.CourseID)
-
-	err := h.kafkaWriter.WriteMessages(ctx, kafka.Message{
-		Key:   []byte(enroll.StudentID),
-		Value: []byte(eventPayload),
+	eventPayload, err := json.Marshal(map[string]string{
+		"student_id": enroll.StudentID,
+		"course_id":  enroll.CourseID,
 	})
 	if err != nil {
-		slog.Error("failed to send event to kafka", "error", err)
+		slog.Error("failed to marshal kafka event", "error", err)
 	} else {
-		slog.Info("kafka event sent", "topic", "enrollments")
+		kafkaCtx, kafkaCancel := context.WithTimeout(ctx, 2*time.Second)
+		defer kafkaCancel()
+
+		err = h.kafkaWriter.WriteMessages(kafkaCtx, kafka.Message{
+			Key:   []byte(enroll.StudentID),
+			Value: eventPayload,
+		})
+		if err != nil {
+			slog.Error("failed to send event to kafka", "error", err)
+		} else {
+			slog.Info("kafka event sent", "topic", "enrollments")
+		}
 	}
 
 	respondJSON(w, http.StatusCreated, map[string]string{"status": "successfully enrolled"})
