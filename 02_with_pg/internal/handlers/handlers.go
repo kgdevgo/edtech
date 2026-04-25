@@ -181,7 +181,9 @@ func respondJSON(w http.ResponseWriter, status int, data any) {
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
+	if _, err := w.Write([]byte("OK")); err != nil {
+		slog.Warn("client disconnected before healthcheck response was sent", "error", err)
+	}
 }
 
 func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
@@ -192,5 +194,7 @@ func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
+	if _, err := w.Write([]byte("OK")); err != nil {
+		slog.Warn("client disconnected before readycheck response was sent", "error", err)
+	}
 }
