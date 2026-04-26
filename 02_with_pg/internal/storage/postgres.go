@@ -59,7 +59,9 @@ func (s *Storage) Enroll(ctx context.Context, studentID, courseID string) error 
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	enrollQuery := `INSERT INTO enrollments (student_id, course_id) VALUES ($1, $2)`
 	_, err = tx.ExecContext(ctx, enrollQuery, studentID, courseID)

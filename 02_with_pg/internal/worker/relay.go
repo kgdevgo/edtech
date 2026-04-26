@@ -41,7 +41,9 @@ func (r *Relay) processOutbox(ctx context.Context) {
 		slog.Error("relay: failed to begin tx", "error", err)
 		return
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	var id, topic string
 	var payload []byte
