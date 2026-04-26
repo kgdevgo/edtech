@@ -67,7 +67,7 @@ func TestCreateStudent(t *testing.T) {
 			mockStore := &MockStorage{
 				CreateStudentErr: tt.mockDBError,
 			}
-			handler := New(mockStore, nil)
+			handler := New(mockStore)
 
 			req, _ := http.NewRequest("POST", "/students", bytes.NewBufferString(tt.requestBody))
 			rr := httptest.NewRecorder()
