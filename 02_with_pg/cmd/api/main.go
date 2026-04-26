@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"edtech-pg/internal/handlers"
 	"edtech-pg/internal/storage"
+	"edtech-pg/internal/worker"
 	"errors"
 	"fmt"
 	"log"
@@ -68,9 +69,15 @@ func main() {
 
 	wg.Add(1)
 	go runEmailWorker(workerCtx, &wg, kafkaBroker, topicName)
+	relayWorker := worker.NewRelay(db, kafkaWriter)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		relayWorker.Start(workerCtx)
+	}()
 
 	store := storage.New(db)
-	h := handlers.New(store, kafkaWriter)
+	h := handlers.New(store)
 
 	mux := http.NewServeMux()
 

@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"edtech-pg/internal/models"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
 
@@ -53,9 +55,38 @@ func (s *Storage) CreateStudent(ctx context.Context, student *models.Student) er
 }
 
 func (s *Storage) Enroll(ctx context.Context, studentID, courseID string) error {
-	query := `INSERT INTO enrollments (student_id, course_id) VALUES ($1, $2)`
-	_, err := s.db.ExecContext(ctx, query, studentID, courseID)
-	return parseDBError(err)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	enrollQuery := `INSERT INTO enrollments (student_id, course_id) VALUES ($1, $2)`
+	_, err = tx.ExecContext(ctx, enrollQuery, studentID, courseID)
+	if err != nil {
+		return parseDBError(err)
+	}
+
+	payload, err := json.Marshal(map[string]string{
+		"student_id": studentID,
+		"course_id":  courseID,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal outbox payload: %w", err)
+	}
+
+	outboxQuery := `INSERT INTO outbox_events (id, topic, payload, status) VALUES ($1, $2, $3, 'pending')`
+	eventID := uuid.New().String()
+	_, err = tx.ExecContext(ctx, outboxQuery, eventID, "enrollments", payload)
+	if err != nil {
+		return fmt.Errorf("insert outbox event: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Storage) GetAllCourses(ctx context.Context) ([]models.Course, error) {

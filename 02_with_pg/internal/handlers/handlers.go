@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/segmentio/kafka-go"
-
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -35,12 +33,11 @@ type EdtechRepository interface {
 }
 
 type Handler struct {
-	store       EdtechRepository
-	kafkaWriter *kafka.Writer
+	store EdtechRepository
 }
 
-func New(store EdtechRepository, kw *kafka.Writer) *Handler {
-	return &Handler{store: store, kafkaWriter: kw}
+func New(store EdtechRepository) *Handler {
+	return &Handler{store: store}
 }
 
 func TimeoutMiddleware(next http.Handler) http.Handler {
@@ -133,27 +130,6 @@ func (h *Handler) Enroll(w http.ResponseWriter, r *http.Request) {
 
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
-	}
-
-	eventPayload, err := json.Marshal(map[string]string{
-		"student_id": enroll.StudentID,
-		"course_id":  enroll.CourseID,
-	})
-	if err != nil {
-		slog.Error("failed to marshal kafka event", "error", err)
-	} else {
-		kafkaCtx, kafkaCancel := context.WithTimeout(ctx, 2*time.Second)
-		defer kafkaCancel()
-
-		err = h.kafkaWriter.WriteMessages(kafkaCtx, kafka.Message{
-			Key:   []byte(enroll.StudentID),
-			Value: eventPayload,
-		})
-		if err != nil {
-			slog.Error("failed to send event to kafka", "error", err)
-		} else {
-			slog.Info("kafka event sent", "topic", "enrollments")
-		}
 	}
 
 	respondJSON(w, http.StatusCreated, map[string]string{"status": "successfully enrolled"})
