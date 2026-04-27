@@ -79,12 +79,19 @@ func main() {
 	store := storage.New(db)
 	h := handlers.New(store)
 
-	mux := http.NewServeMux()
+	applyMiddlewares := func(h http.HandlerFunc) http.Handler {
+		return handlers.RecoveryMiddleware(
+			handlers.RequestIDMiddleware(
+				handlers.LoggingMiddleware(
+					handlers.TimeoutMiddleware(h))))
+	}
 
-	mux.Handle("POST /courses", handlers.TimeoutMiddleware(http.HandlerFunc(h.CreateCourse)))
-	mux.Handle("GET /courses", handlers.TimeoutMiddleware(http.HandlerFunc(h.GetCourses)))
-	mux.Handle("POST /students", handlers.TimeoutMiddleware(http.HandlerFunc(h.CreateStudent)))
-	mux.Handle("POST /enroll", handlers.TimeoutMiddleware(http.HandlerFunc(h.Enroll)))
+	mux := http.NewServeMux()
+	mux.Handle("POST /courses", applyMiddlewares(h.CreateCourse))
+	mux.Handle("GET /courses", applyMiddlewares(h.GetCourses))
+	mux.Handle("POST /students", applyMiddlewares(h.CreateStudent))
+	mux.Handle("POST /enroll", applyMiddlewares(h.Enroll))
+
 	mux.Handle("GET /metrics", promhttp.Handler())
 	mux.Handle("GET /health", http.HandlerFunc(h.Health))
 	mux.Handle("GET /ready", http.HandlerFunc(h.Ready))
