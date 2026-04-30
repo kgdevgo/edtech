@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"edtech-pg/internal/auth"
 	"edtech-pg/internal/handlers"
 	"edtech-pg/internal/storage"
 	"edtech-pg/internal/worker"
@@ -76,8 +77,14 @@ func main() {
 		relayWorker.Start(workerCtx)
 	}()
 
+	jwtSecret := getEnv("JWT_SECRET", "")
+	tokenManager, err := auth.NewTokenManager(jwtSecret)
+	if err != nil {
+		log.Fatal("Failed to create token manager:", err)
+	}
+
 	store := storage.New(db)
-	h := handlers.New(store)
+	h := handlers.New(store, tokenManager)
 
 	applyMiddlewares := func(h http.HandlerFunc) http.Handler {
 		return handlers.RecoveryMiddleware(
@@ -86,11 +93,24 @@ func main() {
 					handlers.TimeoutMiddleware(h))))
 	}
 
+	applyAuthMiddlewares := func(hf http.HandlerFunc) http.Handler {
+		return handlers.RecoveryMiddleware(
+			handlers.RequestIDMiddleware(
+				handlers.LoggingMiddleware(
+					h.AuthMiddleware(
+						handlers.TimeoutMiddleware(hf),
+					),
+				),
+			),
+		)
+	}
+
 	mux := http.NewServeMux()
+	mux.Handle("POST /login", applyMiddlewares(http.HandlerFunc(h.Login)))
 	mux.Handle("POST /courses", applyMiddlewares(h.CreateCourse))
 	mux.Handle("GET /courses", applyMiddlewares(h.GetCourses))
 	mux.Handle("POST /students", applyMiddlewares(h.CreateStudent))
-	mux.Handle("POST /enroll", applyMiddlewares(h.Enroll))
+	mux.Handle("POST /enroll", applyAuthMiddlewares(h.Enroll))
 
 	mux.Handle("GET /metrics", promhttp.Handler())
 	mux.Handle("GET /health", http.HandlerFunc(h.Health))

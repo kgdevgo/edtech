@@ -12,6 +12,30 @@ import (
 type contextKey string
 
 const requestIDKey contextKey = "request_id"
+const userIDKey contextKey = "user_id"
+
+func (h *Handler) AuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" || len(authHeader) < 7 || authHeader[:7] != "Bearer " {
+			slog.Error("unauthorized", "error", "missing or invalid authorization header")
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		tokenString := authHeader[7:]
+
+		studentID, err := h.token.ParseToken(tokenString)
+		if err != nil {
+			slog.Error("jwt authorization failed", "error", err)
+			http.Error(w, "Unauthorized: invalid token", http.StatusUnauthorized)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), userIDKey, studentID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
 
 func RecoveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

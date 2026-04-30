@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"edtech-pg/internal/auth"
 	"edtech-pg/internal/models"
 	"errors"
 	"net/http"
@@ -33,6 +34,10 @@ func (m *MockStorage) GetAllCourses(ctx context.Context) ([]models.Course, error
 
 func (m *MockStorage) CreateStudent(ctx context.Context, student *models.Student) error {
 	return m.CreateStudentErr
+}
+
+func (m *MockStorage) CheckStudentExists(ctx context.Context, id string) (bool, error) {
+	return true, nil
 }
 
 func TestCreateStudent(t *testing.T) {
@@ -67,7 +72,8 @@ func TestCreateStudent(t *testing.T) {
 			mockStore := &MockStorage{
 				CreateStudentErr: tt.mockDBError,
 			}
-			handler := New(mockStore)
+			tokenManager, _ := auth.NewTokenManager("test-secret-key")
+			handler := New(mockStore, tokenManager)
 
 			req, _ := http.NewRequest("POST", "/students", bytes.NewBufferString(tt.requestBody))
 			rr := httptest.NewRecorder()

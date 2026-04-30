@@ -30,14 +30,23 @@ type EdtechRepository interface {
 	CreateStudent(ctx context.Context, student *models.Student) error
 	Enroll(ctx context.Context, studentID, courseID string) error
 	Ping(ctx context.Context) error
+
+	CheckStudentExists(ctx context.Context, id string) (bool, error)
+}
+
+type TokenProvider interface {
+	GenerateToken(studentID string) (string, error)
+	ParseToken(tokenString string) (string, error)
 }
 
 type Handler struct {
 	store EdtechRepository
+	token TokenProvider
 }
 
-func New(store EdtechRepository) *Handler {
-	return &Handler{store: store}
+func New(store EdtechRepository, token TokenProvider) *Handler {
+
+	return &Handler{store: store, token: token}
 }
 
 func TimeoutMiddleware(next http.Handler) http.Handler {
@@ -46,6 +55,39 @@ func TimeoutMiddleware(next http.Handler) http.Handler {
 		defer cancel()
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StudentID string `json:"student_id"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	exists, err := h.store.CheckStudentExists(r.Context(), req.StudentID)
+	if err != nil {
+		slog.Error("database error", "op", "CheckStudentExists", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if !exists {
+		slog.Warn("failed login attempt: student not found", "id", req.StudentID)
+		http.Error(w, "Student not found", http.StatusNotFound)
+		return
+	}
+
+	token, err := h.token.GenerateToken(req.StudentID)
+	if err != nil {
+		slog.Error("failed to generate token", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
 func (h *Handler) CreateCourse(w http.ResponseWriter, r *http.Request) {
@@ -104,15 +146,26 @@ func (h *Handler) CreateStudent(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Enroll(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	var enroll models.Enrollment
 
-	if err := json.NewDecoder(r.Body).Decode(&enroll); err != nil {
+	studentID, ok := ctx.Value(userIDKey).(string)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		CourseID string `json:"course_id"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		slog.Error("failed to decode json", "error", err)
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
-	if err := h.store.Enroll(ctx, enroll.StudentID, enroll.CourseID); err != nil {
+	slog.Info("debug enroll", "parsed_student_id", studentID, "parsed_course_id", req.CourseID)
+
+	if err := h.store.Enroll(ctx, studentID, req.CourseID); err != nil {
 		slog.Error("database error", "op", "Enroll", "error", err)
 
 		if errors.Is(err, context.DeadlineExceeded) {

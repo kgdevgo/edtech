@@ -54,6 +54,18 @@ func (s *Storage) CreateStudent(ctx context.Context, student *models.Student) er
 	return parseDBError(err)
 }
 
+func (s *Storage) CheckStudentExists(ctx context.Context, id string) (bool, error) {
+	var exists bool
+	query := `SELECT EXISTS(SELECT 1 FROM students WHERE id = $1)`
+
+	err := s.db.QueryRowContext(ctx, query, id).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("storage: check student exists failed: %w", err)
+	}
+
+	return exists, nil
+}
+
 func (s *Storage) Enroll(ctx context.Context, studentID, courseID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
