@@ -53,7 +53,13 @@ func main() {
 	}
 	fmt.Println("Successfully connected!")
 
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(25)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(10 * time.Minute)
+
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
 	slog.SetDefault(logger)
 
 	kafkaBroker := getEnv("KAFKA_BROKER", "localhost:29092")
@@ -76,7 +82,7 @@ func main() {
 	})
 	defer redisClient.Close()
 
-	if err := redisClient.Ping(context.Background()).Err(); err != nil {
+	if err = redisClient.Ping(context.Background()).Err(); err != nil {
 		slog.Warn("Failed to connect to Redis, rate limiting wil be disabled (Fail-Open)", "error", err)
 	} else {
 		slog.Info("Successfully connected to Redis")
