@@ -20,6 +20,7 @@ import (
 
 	_ "github.com/lib/pq"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -65,6 +66,24 @@ func main() {
 	}
 	defer kafkaWriter.Close()
 
+	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:         redisAddr,
+		DialTimeout:  1 * time.Second,
+		ReadTimeout:  1 * time.Second,
+		WriteTimeout: 1 * time.Second,
+		PoolSize:     10,
+	})
+	defer redisClient.Close()
+
+	if err := redisClient.Ping(context.Background()).Err(); err != nil {
+		slog.Warn("Failed to connect to Redis, rate limiting wil be disabled (Fail-Open)", "error", err)
+	} else {
+		slog.Info("Successfully connected to Redis")
+	}
+
+	limiter := handlers.NewRateLimiter(redisClient, 5, 1*time.Minute)
+
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 
@@ -105,8 +124,20 @@ func main() {
 		)
 	}
 
+	applyLoginMiddlewares := func(hf http.HandlerFunc) http.Handler {
+		return handlers.RecoveryMiddleware(
+			handlers.RequestIDMiddleware(
+				handlers.LoggingMiddleware(
+					limiter.Middleware(
+						handlers.TimeoutMiddleware(hf),
+					),
+				),
+			),
+		)
+	}
+
 	mux := http.NewServeMux()
-	mux.Handle("POST /login", applyMiddlewares(http.HandlerFunc(h.Login)))
+	mux.Handle("POST /login", applyLoginMiddlewares(h.Login))
 	mux.Handle("POST /courses", applyMiddlewares(h.CreateCourse))
 	mux.Handle("GET /courses", applyMiddlewares(h.GetCourses))
 	mux.Handle("POST /students", applyMiddlewares(h.CreateStudent))

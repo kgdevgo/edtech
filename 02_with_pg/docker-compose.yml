@@ -13,6 +13,7 @@ services:
       - DB_NAME=${POSTGRES_DB}
       - KAFKA_BROKER=kafka:29092
       - JWT_SECRET=${JWT_SECRET}
+      - REDIS_ADDR=${REDIS_ADDR}
     depends_on:
       db:
         condition: service_healthy
@@ -61,3 +62,13 @@ services:
       KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
       CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
