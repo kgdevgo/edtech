@@ -12,6 +12,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"net/smtp"
 	"os"
 	"os/signal"
 	"sync"
@@ -90,11 +91,16 @@ func main() {
 
 	limiter := handlers.NewRateLimiter(redisClient, 5, 1*time.Minute)
 
+	smtpHost := getEnv("SMTP_HOST", "smtp.gmail.com")
+	smtpPort := getEnv("SMTP_PORT", "587")
+	smtpUser := getEnv("SMTP_USER", "")
+	smtpPassword := getEnv("SMTP_PASSWORD", "")
+
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	go runEmailWorker(workerCtx, &wg, kafkaBroker, topicName)
+	go runEmailWorker(workerCtx, &wg, kafkaBroker, topicName, smtpHost, smtpPort, smtpUser, smtpPassword)
 	relayWorker := worker.NewRelay(db, kafkaWriter)
 	wg.Add(1)
 	go func() {
@@ -190,17 +196,30 @@ func main() {
 
 }
 
-func runEmailWorker(ctx context.Context, wg *sync.WaitGroup, broker, topic string) {
+func runEmailWorker(
+	ctx context.Context,
+	wg *sync.WaitGroup,
+	broker,
+	topic,
+	smtpHost,
+	smtpPort,
+	smtpUser,
+	smtpPassword string,
+) {
 	defer wg.Done()
 
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{broker},
 		Topic:   topic,
 		GroupID: "email-sender-group",
+		MaxWait: 1 * time.Second,
 	})
 	defer reader.Close()
 
 	slog.Info("Email worker started, waiting for messages...")
+
+	smtpAuth := smtp.PlainAuth("", smtpUser, smtpPassword, smtpHost)
+	smtpAddr := fmt.Sprintf("%s:%s", smtpHost, smtpPort)
 
 	for {
 		msg, err := reader.ReadMessage(ctx)
@@ -212,9 +231,20 @@ func runEmailWorker(ctx context.Context, wg *sync.WaitGroup, broker, topic strin
 			slog.Error("worker read error", "error", err)
 			break
 		}
-		slog.Info("[WORKER] Sending Welcome Email...",
-			"event", string(msg.Value),
-			"partition", msg.Partition,
-			"offset", msg.Offset)
+
+		slog.Info("[WORKER] Processing event...", "offset", msg.Offset)
+
+		to := []string{smtpUser}
+
+		emailBody := fmt.Sprintf("Subject: New Enrollment\r\n\r\n"+
+			"Hello, you have successfully enrolled in the course. New Kafka event. \n\nData (JSON): %s",
+			string(msg.Value))
+
+		err = smtp.SendMail(smtpAddr, smtpAuth, smtpUser, to, []byte(emailBody))
+		if err != nil {
+			slog.Error("[WORKER] Failed to send email", "error", err)
+		} else {
+			slog.Info("[WORKER] Email sent successfully", "to", smtpUser)
+		}
 	}
 }
