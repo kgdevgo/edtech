@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: edtech-app-deployment
+
+spec:
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app: edtech-backend
+
+  template:
+    metadata:
+      labels:
+        app: edtech-backend
+    spec:
+      containers:
+        - name: go-app
+          image: 02_with_pg-app:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          env:
+            - name: DB_HOST
+              value: "postgres-service"
+            - name: DB_PORT
+              value: "5432"
+            - name: KAFKA_BROKER
+              value: "kafka-service:29092"
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: password
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: jwt_secret
