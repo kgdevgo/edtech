@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"edtech-pg/internal/auth"
+	"edtech-pg/internal/config"
 	"edtech-pg/internal/handlers"
 	"edtech-pg/internal/storage"
 	"edtech-pg/internal/worker"
@@ -25,28 +26,19 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-func getEnv(key, fallback string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
-	}
-	return fallback
-}
-
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 	slog.Info("Starting edtech-api...")
 
+	// Config
+	cfg := config.Load()
+
 	// Database
-	host := getEnv("DB_HOST", "localhost")
-	port := getEnv("DB_PORT", "5432")
-	user := getEnv("DB_USER", "postgres")
-	password := getEnv("DB_PASSWORD", "secret")
-	dbname := getEnv("DB_NAME", "edtech")
 
 	connStr := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		host, port, user, password, dbname)
+		cfg.DB.Host, cfg.DB.Port, cfg.DB.User, cfg.DB.Password, cfg.DB.Name)
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
@@ -65,18 +57,16 @@ func main() {
 	db.SetConnMaxIdleTime(10 * time.Minute)
 
 	// Kafka Writer (for Outbox Relay)
-	kafkaBroker := getEnv("KAFKA_BROKER", "localhost:29092")
 	kafkaWriter := &kafka.Writer{
-		Addr:     kafka.TCP(kafkaBroker),
-		Topic:    "enrollments",
+		Addr:     kafka.TCP(cfg.Kafka.Broker),
+		Topic:    cfg.Kafka.Topic,
 		Balancer: &kafka.LeastBytes{},
 	}
 	defer kafkaWriter.Close()
 
 	// Redis
-	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
 	redisClient := redis.NewClient(&redis.Options{
-		Addr:         redisAddr,
+		Addr:         cfg.Redis.Addr,
 		DialTimeout:  1 * time.Second,
 		ReadTimeout:  1 * time.Second,
 		WriteTimeout: 1 * time.Second,
@@ -104,8 +94,7 @@ func main() {
 	}()
 
 	// App Logic & Routers
-	jwtSecret := getEnv("JWT_SECRET", "")
-	tokenManager, err := auth.NewTokenManager(jwtSecret)
+	tokenManager, err := auth.NewTokenManager(cfg.App.JWTSecret)
 	if err != nil {
 		log.Fatal("Failed to create token manager:", err)
 	}
@@ -153,7 +142,7 @@ func main() {
 	mux.Handle("GET /ready", http.HandlerFunc(h.Ready))
 
 	srv := &http.Server{
-		Addr:    ":8080",
+		Addr:    ":" + cfg.App.Port,
 		Handler: mux,
 	}
 

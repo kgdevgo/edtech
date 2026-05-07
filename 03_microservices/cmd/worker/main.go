@@ -11,41 +11,30 @@ import (
 	"syscall"
 	"time"
 
+	"edtech-pg/internal/config"
+
 	"github.com/segmentio/kafka-go"
 )
-
-func getEnv(key, fallback string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
-	}
-	return fallback
-}
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 	slog.Info("Starting edtech-worker...")
 
-	// Configs
-	kafkaBroker := getEnv("KAFKA_BROKER", "localhost:29092")
-	topicName := "enrollments"
-
-	smtpHost := getEnv("SMTP_HOST", "smtp.gmail.com")
-	smtpPort := getEnv("SMTP_PORT", "587")
-	smtpUser := getEnv("SMTP_USER", "")
-	smtpPassword := getEnv("SMTP_PASSWORD", "")
+	// Config
+	cfg := config.Load()
 
 	// Kafka Reader
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers: []string{kafkaBroker},
-		Topic:   topicName,
+		Brokers: []string{cfg.Kafka.Broker},
+		Topic:   cfg.Kafka.Topic,
 		GroupID: "email-sender-group",
 		MaxWait: 1 * time.Second,
 	})
 	defer reader.Close()
 
-	smtpAuth := smtp.PlainAuth("", smtpUser, smtpPassword, smtpHost)
-	smtpAddr := fmt.Sprintf("%s:%s", smtpHost, smtpPort)
+	smtpAuth := smtp.PlainAuth("", cfg.SMTP.User, cfg.SMTP.Password, cfg.SMTP.Host)
+	smtpAddr := fmt.Sprintf("%s:%s", cfg.SMTP.Host, cfg.SMTP.Port)
 
 	// Context & Graceful Shutdown Setup
 	ctx, cancel := context.WithCancel(context.Background())
@@ -75,16 +64,16 @@ func main() {
 
 		slog.Info("[WORKER] Processing event...", "offset", msg.Offset)
 
-		to := []string{smtpUser}
+		to := []string{cfg.SMTP.User}
 		emailBody := fmt.Sprintf("Subject: New Enrollment\r\n\r\n"+
 			"Hello, you have successfully enrolled in the course. New Kafka event. \n\nData (JSON): %s",
 			string(msg.Value))
 
-		err = smtp.SendMail(smtpAddr, smtpAuth, smtpUser, to, []byte(emailBody))
+		err = smtp.SendMail(smtpAddr, smtpAuth, cfg.SMTP.User, to, []byte(emailBody))
 		if err != nil {
 			slog.Error("[WORKER] Failed to send email", "error", err)
 		} else {
-			slog.Info("[WORKER] Email sent successfully", "to", smtpUser)
+			slog.Info("[WORKER] Email sent successfully", "to", cfg.SMTP.User)
 		}
 	}
 
