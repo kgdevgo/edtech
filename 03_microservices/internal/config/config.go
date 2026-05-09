@@ -61,7 +61,7 @@ func Load() *Config {
 		},
 		Kafka: KafkaConfig{
 			Broker: getEnv("KAFKA_BROKER", "localhost:29092"),
-			Topic:  getEnv("KAFKA_TOPIC", "enrollments"),
+			Topic:  getEnv("KAFKA_TOPIC", "payment_commands"),
 		},
 		Redis: RedisConfig{
 			Addr: getEnv("REDIS_ADDR", "localhost:6379"),

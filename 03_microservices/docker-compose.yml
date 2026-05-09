@@ -36,6 +36,17 @@ services:
       kafka:
         condition: service_started
 
+  payment-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.payment
+    restart: always
+    environment:
+      - KAFKA_BROKER=kafka:29092
+    depends_on:
+      kafka:
+        condition: service_started
+
   db:
     image: postgres:15-alpine
     environment:
