@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"edtech-pg/internal/events"
 	"edtech-pg/internal/models"
 	"encoding/json"
 	"errors"
@@ -81,9 +82,9 @@ func (s *Storage) Enroll(ctx context.Context, studentID, courseID string) error 
 		return parseDBError(err)
 	}
 
-	payload, err := json.Marshal(map[string]string{
-		"student_id": studentID,
-		"course_id":  courseID,
+	payload, err := json.Marshal(events.EnrollmentCreatedPayload{
+		StudentID: studentID,
+		CourseID:  courseID,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal outbox payload: %w", err)
@@ -91,7 +92,7 @@ func (s *Storage) Enroll(ctx context.Context, studentID, courseID string) error 
 
 	outboxQuery := `INSERT INTO outbox_events (id, topic, payload, status) VALUES ($1, $2, $3, 'pending')`
 	eventID := uuid.New().String()
-	_, err = tx.ExecContext(ctx, outboxQuery, eventID, "enrollments", payload)
+	_, err = tx.ExecContext(ctx, outboxQuery, eventID, events.TopicEnrollmentCreated, payload)
 	if err != nil {
 		return fmt.Errorf("insert outbox event: %w", err)
 	}
@@ -124,6 +125,47 @@ func (s *Storage) GetAllCourses(ctx context.Context) ([]models.Course, error) {
 	}
 
 	return courses, nil
+}
+
+func (s *Storage) ProcessPaymentResult(ctx context.Context, studentID, courseID, paymentStatus string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	newStatus := "active"
+	if paymentStatus == "failed" {
+		newStatus = "canceled"
+	}
+
+	query := `UPDATE enrollments SET status = $1 WHERE student_id = $2 AND course_id = $3 AND status = 'pending'`
+	res, err := tx.ExecContext(ctx, query, newStatus, studentID, courseID)
+	if err != nil {
+		return parseDBError(err)
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil || affected == 0 {
+		return nil
+	}
+
+	if newStatus == "active" {
+		payload, err := json.Marshal(map[string]string{
+			"student_id": studentID,
+			"course_id":  courseID,
+		})
+		if err != nil {
+			return fmt.Errorf("marshal outbox: %w", err)
+		}
+
+		outboxQuery := `INSERT INTO outbox_events (id, topic, payload, status) VALUES ($1, $2, $3, 'pending')`
+		_, err = tx.ExecContext(ctx, outboxQuery, uuid.New().String(), events.TopicEnrollmentActive, payload)
+		if err != nil {
+			return fmt.Errorf("insert email event: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Storage) Ping(ctx context.Context) error {

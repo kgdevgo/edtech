@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"edtech-pg/internal/events"
 	"errors"
 	"fmt"
 	"log"
@@ -26,12 +27,21 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
+type Middleware func(handler http.Handler) http.Handler
+
+func chain(h http.HandlerFunc, middlewares ...Middleware) http.Handler {
+	var final http.Handler = h
+	for i := len(middlewares) - 1; i >= 0; i-- {
+		final = middlewares[i](final)
+	}
+	return final
+}
+
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 	slog.Info("Starting edtech-api...")
 
-	// Config
 	cfg := config.Load()
 
 	// Database
@@ -56,15 +66,22 @@ func main() {
 	db.SetConnMaxLifetime(5 * time.Minute)
 	db.SetConnMaxIdleTime(10 * time.Minute)
 
-	// Kafka Writer (for Outbox Relay)
+	// Kafka Writer (Outbox Relay) & Reader (API Consumer)
 	kafkaWriter := &kafka.Writer{
-		Addr:     kafka.TCP(cfg.Kafka.Broker),
-		Topic:    cfg.Kafka.Topic,
-		Balancer: &kafka.LeastBytes{},
+		Addr:                   kafka.TCP(cfg.Kafka.Broker),
+		Balancer:               &kafka.LeastBytes{},
+		AllowAutoTopicCreation: true,
 	}
 	defer kafkaWriter.Close()
 
-	// Redis
+	kafkaReader := kafka.NewReader(kafka.ReaderConfig{
+		Brokers: []string{cfg.Kafka.Broker},
+		Topic:   events.TopicPaymentCompleted,
+		GroupID: "api-results-group",
+	})
+	defer kafkaReader.Close()
+
+	// Redis & Rate Limiter
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:         cfg.Redis.Addr,
 		DialTimeout:  1 * time.Second,
@@ -82,7 +99,16 @@ func main() {
 
 	limiter := handlers.NewRateLimiter(redisClient, 5, 1*time.Minute)
 
-	// Background Workers (Outbox Relay)
+	// App Logic
+	tokenManager, err := auth.NewTokenManager(cfg.App.JWTSecret)
+	if err != nil {
+		log.Fatal("Failed to create token manager:", err)
+	}
+
+	store := storage.New(db)
+	h := handlers.New(store, tokenManager)
+
+	// Background Workers
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 
@@ -93,50 +119,33 @@ func main() {
 		relayWorker.Start(workerCtx)
 	}()
 
-	// App Logic & Routers
-	tokenManager, err := auth.NewTokenManager(cfg.App.JWTSecret)
-	if err != nil {
-		log.Fatal("Failed to create token manager:", err)
-	}
+	apiConsumer := worker.NewConsumer(kafkaReader, store)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		apiConsumer.Start(workerCtx)
+	}()
 
-	store := storage.New(db)
-	h := handlers.New(store, tokenManager)
+	// Middlewares & Routers
 
-	applyMiddlewares := func(h http.HandlerFunc) http.Handler {
-		return handlers.RecoveryMiddleware(
-			handlers.RequestIDMiddleware(
-				handlers.LoggingMiddleware(
-					handlers.TimeoutMiddleware(h))))
-	}
-
-	applyAuthMiddlewares := func(hf http.HandlerFunc) http.Handler {
-		return handlers.RecoveryMiddleware(
-			handlers.RequestIDMiddleware(
-				handlers.LoggingMiddleware(
-					h.AuthMiddleware(handlers.TimeoutMiddleware(hf)),
-				),
-			),
-		)
-	}
-
-	applyLoginMiddlewares := func(hf http.HandlerFunc) http.Handler {
-		return handlers.RecoveryMiddleware(
-			handlers.RequestIDMiddleware(
-				handlers.LoggingMiddleware(
-					limiter.Middleware(
-						handlers.TimeoutMiddleware(hf),
-					),
-				),
-			),
-		)
+	baseStack := []Middleware{
+		handlers.RecoveryMiddleware,
+		handlers.RequestIDMiddleware,
+		handlers.LoggingMiddleware,
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("POST /login", applyLoginMiddlewares(h.Login))
-	mux.Handle("POST /courses", applyMiddlewares(h.CreateCourse))
-	mux.Handle("GET /courses", applyMiddlewares(h.GetCourses))
-	mux.Handle("POST /students", applyMiddlewares(h.CreateStudent))
-	mux.Handle("POST /enroll", applyAuthMiddlewares(h.Enroll))
+
+	// Unauthenticated routes
+	mux.Handle("POST /login", chain(h.Login, append(baseStack, limiter.Middleware, handlers.TimeoutMiddleware)...))
+	mux.Handle("POST /courses", chain(h.CreateCourse, append(baseStack, handlers.TimeoutMiddleware)...))
+	mux.Handle("GET /courses", chain(h.GetCourses, append(baseStack, handlers.TimeoutMiddleware)...))
+	mux.Handle("POST /students", chain(h.CreateStudent, append(baseStack, handlers.TimeoutMiddleware)...))
+
+	// Authenticated routes
+	mux.Handle("POST /enroll", chain(h.Enroll, append(baseStack, h.AuthMiddleware, handlers.TimeoutMiddleware)...))
+
+	// Metrics & health checks
 	mux.Handle("GET /metrics", promhttp.Handler())
 	mux.Handle("GET /health", http.HandlerFunc(h.Health))
 	mux.Handle("GET /ready", http.HandlerFunc(h.Ready))

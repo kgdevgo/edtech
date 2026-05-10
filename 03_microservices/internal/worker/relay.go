@@ -69,6 +69,7 @@ func (r *Relay) processOutbox(ctx context.Context) {
 	defer cancel()
 
 	err = r.kafkaWriter.WriteMessages(kafkaCtx, kafka.Message{
+		Topic: topic,
 		Key:   []byte(id),
 		Value: payload,
 	})

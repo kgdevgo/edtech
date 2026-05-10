@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"edtech-pg/internal/events"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,17 +21,17 @@ import (
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
-	slog.Info("Starting edtech-worker...")
+	slog.Info("Starting email-worker...")
 
-	// Config
 	cfg := config.Load()
 
 	// Kafka Reader
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers: []string{cfg.Kafka.Broker},
-		Topic:   cfg.Kafka.Topic,
-		GroupID: "email-sender-group",
-		MaxWait: 1 * time.Second,
+		Brokers:     []string{cfg.Kafka.Broker},
+		Topic:       events.TopicEnrollmentActive,
+		GroupID:     "email-sender-group-v2",
+		StartOffset: kafka.FirstOffset,
+		MaxWait:     1 * time.Second,
 	})
 	defer reader.Close()
 
@@ -64,16 +66,35 @@ func main() {
 
 		slog.Info("[WORKER] Processing event...", "offset", msg.Offset)
 
+		var payload map[string]string
+		if err := json.Unmarshal(msg.Value, &payload); err != nil {
+			slog.Error("failed to unmarshal payload", "error", err)
+		}
+
+		courseID := payload["course_id"]
+		if courseID == "" {
+			courseID = "Unknown Course"
+		}
+
 		to := []string{cfg.SMTP.User}
 		emailBody := fmt.Sprintf("Subject: New Enrollment\r\n\r\n"+
-			"Hello, you have successfully enrolled in the course. New Kafka event. \n\nData (JSON): %s",
-			string(msg.Value))
+			"Hello, you have successfully enrolled in the course: %s. \n\n New Kafka event. \n\nData (JSON): %s",
+			courseID, string(msg.Value))
 
-		err = smtp.SendMail(smtpAddr, smtpAuth, cfg.SMTP.User, to, []byte(emailBody))
-		if err != nil {
-			slog.Error("[WORKER] Failed to send email", "error", err)
-		} else {
-			slog.Info("[WORKER] Email sent successfully", "to", cfg.SMTP.User)
+		done := make(chan error, 1)
+		go func() {
+			done <- smtp.SendMail(smtpAddr, smtpAuth, cfg.SMTP.User, to, []byte(emailBody))
+		}()
+
+		select {
+		case <-time.After(5 * time.Second):
+			slog.Error("[WORKER] SMTP connection timed out.")
+		case err := <-done:
+			if err != nil {
+				slog.Error("[WORKER] Failed to send email", "error", err)
+			} else {
+				slog.Info("[WORKER] Email sent successfully", "to", cfg.SMTP.User)
+			}
 		}
 	}
 
