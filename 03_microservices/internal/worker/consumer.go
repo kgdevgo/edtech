@@ -10,7 +10,7 @@ import (
 )
 
 type ResultProcessor interface {
-	ProcessPaymentResult(ctx context.Context, studentID, courseID, paymentStatus string) error
+	ProcessPaymentResult(ctx context.Context, eventID, studentID, courseID, paymentStatus string) error
 }
 
 type Consumer struct {
@@ -42,9 +42,23 @@ func (c *Consumer) Start(ctx context.Context) {
 			continue
 		}
 
-		slog.Info("Received payment result", "student_id", result.StudentID, "status", result.Status)
+		slog.Info(
+			"Received payment result",
+			"student_id",
+			result.StudentID,
+			"status",
+			result.Status,
+			"event_id",
+			result.EventID,
+		)
 
-		if err := c.db.ProcessPaymentResult(ctx, result.StudentID, result.CourseID, result.Status); err != nil {
+		if err := c.db.ProcessPaymentResult(
+			ctx,
+			result.EventID,
+			result.StudentID,
+			result.CourseID,
+			result.Status,
+		); err != nil {
 			slog.Error("failed to process payment result in db", "error", err)
 		}
 	}

@@ -71,7 +71,7 @@ func main() {
 			continue
 		}
 
-		slog.Info("[PAYMENT] Processing payment...", "student_id", cmd.StudentID)
+		slog.Info("[PAYMENT] Processing payment...", "student_id", cmd.StudentID, "event_id", cmd.EventID)
 
 		time.Sleep(2 * time.Second)
 
@@ -81,6 +81,7 @@ func main() {
 		}
 
 		result := events.PaymentCompletedPayload{
+			EventID:   cmd.EventID,
 			StudentID: cmd.StudentID,
 			CourseID:  cmd.CourseID,
 			Status:    status,
