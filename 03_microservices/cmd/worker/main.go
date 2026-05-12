@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"edtech-pg/internal/events"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"log/slog"
 	"net/smtp"
 	"os"
@@ -15,6 +17,7 @@ import (
 
 	"edtech-pg/internal/config"
 
+	_ "github.com/lib/pq"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -24,6 +27,21 @@ func main() {
 	slog.Info("Starting email-worker...")
 
 	cfg := config.Load()
+
+	connStr := fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		cfg.DB.Host, cfg.DB.Port, cfg.DB.User, cfg.DB.Password, cfg.DB.Name)
+
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	if err = db.Ping(); err != nil {
+		log.Fatal("Failed to connect to database in email-worker", err)
+	}
+	slog.Info("Email worker successfully connected to Database!")
 
 	// Kafka Reader
 	reader := kafka.NewReader(kafka.ReaderConfig{
@@ -71,10 +89,33 @@ func main() {
 			slog.Error("failed to unmarshal payload", "error", err)
 		}
 
+		eventID := payload["event_id"]
 		courseID := payload["course_id"]
 		if courseID == "" {
 			courseID = "Unknown Course"
 		}
+
+		if eventID != "" {
+			res, err := db.ExecContext(
+				ctx,
+				`INSERT INTO processed_events (event_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+				eventID,
+			)
+			if err != nil {
+				slog.Error("[WORKER] Failed to check idempotency, skipping to be safe", "error", err)
+				continue
+			}
+
+			affected, _ := res.RowsAffected()
+			if affected == 0 {
+				slog.Info("[WORKER] Event already processed, skipping", "event_id", eventID)
+				continue
+			}
+		} else {
+			slog.Warn("[WORKER] Received event without event_id, processing without idempotency check")
+		}
+
+		slog.Info("[WORKER] Sending email...", "event_id", eventID)
 
 		to := []string{cfg.SMTP.User}
 		emailBody := fmt.Sprintf("Subject: New Enrollment\r\n\r\n"+
