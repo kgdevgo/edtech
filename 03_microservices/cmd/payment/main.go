@@ -91,7 +91,10 @@ func main() {
 
 		var writeErr error
 		for i := 0; i < 3; i++ {
-			writeErr = writer.WriteMessages(ctx, kafka.Message{Value: resultBytes})
+			writeErr = writer.WriteMessages(ctx, kafka.Message{
+				Key:   []byte(cmd.EventID),
+				Value: resultBytes,
+			})
 			if writeErr == nil {
 				break
 			}

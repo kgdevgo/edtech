@@ -26,7 +26,7 @@ func (c *Consumer) Start(ctx context.Context) {
 	slog.Info("API Result Consumer started")
 
 	for {
-		msg, err := c.reader.ReadMessage(ctx)
+		msg, err := c.reader.FetchMessage(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				slog.Info("Consumer stopping due to context cancellation")
@@ -39,6 +39,7 @@ func (c *Consumer) Start(ctx context.Context) {
 		var result events.PaymentCompletedPayload
 		if err := json.Unmarshal(msg.Value, &result); err != nil {
 			slog.Error("failed to unmarshal payment result", "error", err)
+			_ = c.reader.CommitMessages(ctx, msg)
 			continue
 		}
 
@@ -60,6 +61,11 @@ func (c *Consumer) Start(ctx context.Context) {
 			result.Status,
 		); err != nil {
 			slog.Error("failed to process payment result in db", "error", err)
+			continue
+		}
+
+		if err := c.reader.CommitMessages(ctx, msg); err != nil {
+			slog.Error("failed to commit message", "error", err)
 		}
 	}
 }

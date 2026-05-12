@@ -72,7 +72,7 @@ func main() {
 
 	// Main Event Loop
 	for {
-		msg, err := reader.ReadMessage(ctx)
+		msg, err := reader.FetchMessage(ctx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				slog.Info("Email worker loop stopped cleanly")
@@ -87,6 +87,8 @@ func main() {
 		var payload map[string]string
 		if err := json.Unmarshal(msg.Value, &payload); err != nil {
 			slog.Error("failed to unmarshal payload", "error", err)
+			_ = reader.CommitMessages(ctx, msg)
+			continue
 		}
 
 		eventID := payload["event_id"]
@@ -95,24 +97,29 @@ func main() {
 			courseID = "Unknown Course"
 		}
 
-		if eventID != "" {
-			res, err := db.ExecContext(
-				ctx,
-				`INSERT INTO processed_events (event_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+		if eventID == "" {
+			slog.Error("[WORKER] EventID is empty, rejecting message to maintain idempotency invariant")
+			_ = reader.CommitMessages(ctx, msg)
+			continue
+		}
+
+		res, err := db.ExecContext(
+			ctx, `INSERT INTO processed_events (event_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+			eventID,
+		)
+		if err != nil {
+			slog.Error("[WORKER] Failed to check idempotency", "error", err)
+			continue
+		}
+
+		affected, _ := res.RowsAffected()
+		if affected == 0 {
+			slog.Info(
+				"[WORKER] Duplicate event detected, email already sent. Skipping.",
+				"event_id",
 				eventID,
 			)
-			if err != nil {
-				slog.Error("[WORKER] Failed to check idempotency, skipping to be safe", "error", err)
-				continue
-			}
-
-			affected, _ := res.RowsAffected()
-			if affected == 0 {
-				slog.Info("[WORKER] Event already processed, skipping", "event_id", eventID)
-				continue
-			}
-		} else {
-			slog.Warn("[WORKER] Received event without event_id, processing without idempotency check")
+			continue
 		}
 
 		slog.Info("[WORKER] Sending email...", "event_id", eventID)
@@ -129,12 +136,15 @@ func main() {
 
 		select {
 		case <-time.After(5 * time.Second):
-			slog.Error("[WORKER] SMTP connection timed out.")
+			slog.Error("[WORKER] SMTP connection timed out. NOT commiting offset.")
 		case err := <-done:
 			if err != nil {
 				slog.Error("[WORKER] Failed to send email", "error", err)
 			} else {
 				slog.Info("[WORKER] Email sent successfully", "to", cfg.SMTP.User)
+				if err := reader.CommitMessages(ctx, msg); err != nil {
+					slog.Error("[WORKER] Failed to commit message", "error", err)
+				}
 			}
 		}
 	}
