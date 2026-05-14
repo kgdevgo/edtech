@@ -38,7 +38,9 @@ func chain(h http.HandlerFunc, middlewares ...Middleware) http.Handler {
 }
 
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
 	slog.SetDefault(logger)
 	slog.Info("Starting edtech-api...")
 
