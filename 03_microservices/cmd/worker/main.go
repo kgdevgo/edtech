@@ -18,7 +18,16 @@ import (
 	"edtech-pg/internal/config"
 
 	_ "github.com/lib/pq"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/segmentio/kafka-go"
+)
+
+var (
+	dlqTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "dlq_total",
+		Help: "Total number of messages routed to DLQ",
+	})
 )
 
 func main() {
@@ -185,4 +194,5 @@ func routeToDLQ(ctx context.Context, writer *kafka.Writer, originalMsg kafka.Mes
 	} else {
 		slog.Info("Message successfully routed to DLQ", "reason", reason)
 	}
+	dlqTotal.Inc()
 }
