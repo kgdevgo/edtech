@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/lib/pq"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -45,49 +46,76 @@ func (r *Relay) processOutbox(ctx context.Context) {
 		_ = tx.Rollback()
 	}()
 
-	var id, topic string
-	var payload []byte
-
 	query := `
 		SELECT id, topic, payload
 		FROM outbox_events
 		WHERE status = 'pending'
 		ORDER BY created_at ASC
-		LIMIT 1
+		LIMIT 100
 		FOR UPDATE SKIP LOCKED
 	`
 
-	err = tx.QueryRowContext(ctx, query).Scan(&id, &topic, &payload)
+	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
-		if err != sql.ErrNoRows {
-			slog.Error("relay: failed to fetch event", "error", err)
-		}
+		slog.Error("relay: failed to fetch events", "error", err)
 		return
+	}
+	defer rows.Close()
+
+	type event struct {
+		id      string
+		topic   string
+		payload []byte
+	}
+	var events []event
+
+	for rows.Next() {
+		var e event
+		if err := rows.Scan(&e.id, &e.topic, &e.payload); err != nil {
+			slog.Error("relay: failed to scan event", "error", err)
+			return
+		}
+		events = append(events, e)
+	}
+
+	if err := rows.Err(); err != nil {
+		slog.Error("relay: rows iteration error", "error", err)
+		return
+	}
+
+	if len(events) == 0 {
+		return
+	}
+
+	var msgs []kafka.Message
+	var ids []string
+	for _, e := range events {
+		msgs = append(msgs, kafka.Message{
+			Topic: e.topic,
+			Key:   []byte(e.id),
+			Value: e.payload,
+		})
+		ids = append(ids, e.id)
 	}
 
 	kafkaCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
-	err = r.kafkaWriter.WriteMessages(kafkaCtx, kafka.Message{
-		Topic: topic,
-		Key:   []byte(id),
-		Value: payload,
-	})
-
+	err = r.kafkaWriter.WriteMessages(kafkaCtx, msgs...)
 	if err != nil {
-		slog.Error("relay: failed to send to kafka", "error", err, "event_id", id)
+		slog.Error("relay: failed to send batch to kafka", "error", err, "batch_size", len(msgs))
 		return
 	}
 
-	_, err = tx.ExecContext(ctx, `UPDATE outbox_events SET status = 'done' WHERE id = $1`, id)
+	_, err = tx.ExecContext(ctx, `UPDATE outbox_events SET status = 'done' WHERE id = ANY($1)`, pq.Array(ids))
 	if err != nil {
-		slog.Error("relay: failed to update status", "error", err, "event_id", id)
+		slog.Error("relay: failed to update statuses", "error", err)
 		return
 	}
 
 	if err := tx.Commit(); err != nil {
 		slog.Error("relay: failed to commit tx", "error", err)
 	} else {
-		slog.Info("relay: event sent successfully", "event_id", id)
+		slog.Info("relay: batch sent successfully", "count", len(ids))
 	}
 }

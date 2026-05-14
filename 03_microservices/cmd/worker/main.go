@@ -129,22 +129,17 @@ func main() {
 			continue
 		}
 
-		res, err := db.ExecContext(
-			ctx, `INSERT INTO processed_events (event_id) VALUES ($1) ON CONFLICT DO NOTHING`,
-			eventID,
-		)
+		var exists bool
+		err = db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM processed_events WHERE event_id = $1)`,
+			eventID).Scan(&exists)
 		if err != nil {
 			logCtx.Error("[WORKER] Failed to check idempotency", "error", err)
 			continue
 		}
 
-		affected, _ := res.RowsAffected()
-		if affected == 0 {
-			logCtx.Info(
-				"[WORKER] Duplicate event detected, email already sent. Skipping.",
-				"event_id",
-				eventID,
-			)
+		if exists {
+			logCtx.Info("[WORKER] Duplicate event detected, email already sent. Skipping.", "event_id", eventID)
+			_ = reader.CommitMessages(ctx, msg)
 			continue
 		}
 
@@ -168,6 +163,13 @@ func main() {
 				logCtx.Error("[WORKER] Failed to send email", "error", err)
 			} else {
 				logCtx.Info("[WORKER] Email sent successfully", "to", cfg.SMTP.User)
+
+				_, dbErr := db.ExecContext(ctx,
+					`INSERT INTO processed_events (event_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+					eventID)
+				if dbErr != nil {
+					logCtx.Error("[WORKER] Failed to mark event as processed in DB", "error", dbErr)
+				}
 				if err := reader.CommitMessages(ctx, msg); err != nil {
 					logCtx.Error("[WORKER] Failed to commit message", "error", err)
 				}

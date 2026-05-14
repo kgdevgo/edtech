@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: go-app
-          image: 03_with_pg-app:latest
+          image: edtech-api:latest
           imagePullPolicy: Never
           ports:
             - containerPort: 8080
