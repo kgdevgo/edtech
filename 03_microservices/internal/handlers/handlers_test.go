@@ -5,6 +5,7 @@ import (
 	"context"
 	"edtech-pg/internal/auth"
 	"edtech-pg/internal/models"
+	"edtech-pg/internal/storage"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 type MockStorage struct {
 	courses          []models.Course
 	CreateStudentErr error
+	EnrollErr        error
 }
 
 func (m *MockStorage) CreateCourse(ctx context.Context, course *models.Course) error {
@@ -21,7 +23,7 @@ func (m *MockStorage) CreateCourse(ctx context.Context, course *models.Course) e
 }
 
 func (m *MockStorage) Enroll(ctx context.Context, studentID, courseID string) error {
-	return nil
+	return m.EnrollErr
 }
 
 func (m *MockStorage) Ping(ctx context.Context) error {
@@ -83,6 +85,84 @@ func TestCreateStudent(t *testing.T) {
 			if status := rr.Code; status != tt.expectedStatus {
 				t.Errorf("handler returned wrong status code: got %v want %v", status, tt.expectedStatus)
 			}
+		})
+	}
+}
+
+func TestEnroll(t *testing.T) {
+	tests := []struct {
+		name           string
+		ctxUserID      string
+		requestBody    string
+		mockDBError    error
+		expectedStatus int
+	}{
+		{
+			name:           "Valid Request - Success",
+			ctxUserID:      "student-123",
+			requestBody:    `{"course_id": "course-456"}`,
+			mockDBError:    nil,
+			expectedStatus: http.StatusCreated,
+		},
+		{
+			name:           "Unauthorized - Missing Context User",
+			ctxUserID:      "",
+			requestBody:    `{"course_id": "course-456"}`,
+			mockDBError:    nil,
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "Invalid JSON - Bad Request",
+			ctxUserID:      "student-123",
+			requestBody:    `{"course_id": }`,
+			mockDBError:    nil,
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "DB Failed - Internal Error",
+			ctxUserID:      "student-123",
+			requestBody:    `{"course_id": "course-456"}`,
+			mockDBError:    errors.New("database connection lost"),
+			expectedStatus: http.StatusInternalServerError,
+		},
+		{
+			name:           "Duplicate Enrollment - Conflict",
+			ctxUserID:      "student-123",
+			requestBody:    `{"course_id": "course-456"}`,
+			mockDBError:    storage.ErrDuplicate,
+			expectedStatus: http.StatusConflict,
+		},
+		{
+			name:           "Invalid Course ID - Bad Request",
+			ctxUserID:      "student-123",
+			requestBody:    `{"course_id": "fake-course"}`,
+			mockDBError:    storage.ErrForeignKey,
+			expectedStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockStore := &MockStorage{
+				EnrollErr: tt.mockDBError,
+			}
+			tokenManager, _ := auth.NewTokenManager("test-secret-key")
+			handler := New(mockStore, tokenManager)
+
+			req := httptest.NewRequest(http.MethodPost, "/enroll", bytes.NewBufferString(tt.requestBody))
+
+			if tt.ctxUserID != "" {
+				ctx := context.WithValue(req.Context(), userIDKey, tt.ctxUserID)
+				req = req.WithContext(ctx)
+			}
+
+			rr := httptest.NewRecorder()
+			handler.Enroll(rr, req)
+
+			if status := rr.Code; status != tt.expectedStatus {
+				t.Errorf("handler returned wrong status code: got %v want %v", status, tt.expectedStatus)
+			}
+
 		})
 	}
 }
