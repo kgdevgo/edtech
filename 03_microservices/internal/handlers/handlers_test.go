@@ -22,7 +22,7 @@ func (m *MockStorage) CreateCourse(ctx context.Context, course *models.Course) e
 	return nil
 }
 
-func (m *MockStorage) Enroll(ctx context.Context, studentID, courseID string) error {
+func (m *MockStorage) Enroll(ctx context.Context, corrID, studentID, courseID string) error {
 	return m.EnrollErr
 }
 
@@ -151,10 +151,14 @@ func TestEnroll(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodPost, "/enroll", bytes.NewBufferString(tt.requestBody))
 
+			ctx := req.Context()
 			if tt.ctxUserID != "" {
-				ctx := context.WithValue(req.Context(), userIDKey, tt.ctxUserID)
-				req = req.WithContext(ctx)
+				ctx = context.WithValue(req.Context(), userIDKey, tt.ctxUserID)
 			}
+
+			ctx = context.WithValue(ctx, correlationIDKey, "test-corr-123")
+
+			req = req.WithContext(ctx)
 
 			rr := httptest.NewRecorder()
 			handler.Enroll(rr, req)
