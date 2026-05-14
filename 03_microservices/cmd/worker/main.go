@@ -30,6 +30,7 @@ func main() {
 
 	cfg := config.Load()
 
+	// Database Setup
 	connStr := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		cfg.DB.Host, cfg.DB.Port, cfg.DB.User, cfg.DB.Password, cfg.DB.Name)
@@ -54,6 +55,15 @@ func main() {
 		MaxWait:     1 * time.Second,
 	})
 	defer reader.Close()
+
+	// Kafka Writer (Dead Letter Queue)
+	dlqWriter := &kafka.Writer{
+		Addr:                   kafka.TCP(cfg.Kafka.Broker),
+		Topic:                  events.TopicEnrollmentActive + ".dlq",
+		Balancer:               &kafka.LeastBytes{},
+		AllowAutoTopicCreation: true,
+	}
+	defer dlqWriter.Close()
 
 	smtpAuth := smtp.PlainAuth("", cfg.SMTP.User, cfg.SMTP.Password, cfg.SMTP.Host)
 	smtpAddr := fmt.Sprintf("%s:%s", cfg.SMTP.Host, cfg.SMTP.Port)
@@ -88,13 +98,14 @@ func main() {
 
 		var payload map[string]string
 		if err := json.Unmarshal(msg.Value, &payload); err != nil {
-			slog.Error("failed to unmarshal payload", "error", err)
+			slog.Error("failed to unmarshal payload, routing to DLQ", "error", err)
+			routeToDLQ(ctx, dlqWriter, msg, fmt.Sprintf("unmarshal error: %v", err))
 			_ = reader.CommitMessages(ctx, msg)
 			continue
 		}
 
 		corrID := payload["correlation_id"]
-		log := slog.With("correlation_id", corrID)
+		logCtx := slog.With("correlation_id", corrID)
 
 		eventID := payload["event_id"]
 		courseID := payload["course_id"]
@@ -103,7 +114,8 @@ func main() {
 		}
 
 		if eventID == "" {
-			log.Error("[WORKER] EventID is empty, rejecting message to maintain idempotency invariant")
+			logCtx.Error("[WORKER] EventID is empty, routing to DLQ to maintain idempotency invariant")
+			routeToDLQ(ctx, dlqWriter, msg, "missing event_id")
 			_ = reader.CommitMessages(ctx, msg)
 			continue
 		}
@@ -113,13 +125,13 @@ func main() {
 			eventID,
 		)
 		if err != nil {
-			log.Error("[WORKER] Failed to check idempotency", "error", err)
+			logCtx.Error("[WORKER] Failed to check idempotency", "error", err)
 			continue
 		}
 
 		affected, _ := res.RowsAffected()
 		if affected == 0 {
-			log.Info(
+			logCtx.Info(
 				"[WORKER] Duplicate event detected, email already sent. Skipping.",
 				"event_id",
 				eventID,
@@ -127,7 +139,7 @@ func main() {
 			continue
 		}
 
-		log.Info("[WORKER] Sending email...", "event_id", eventID)
+		logCtx.Info("[WORKER] Sending email...", "event_id", eventID)
 
 		to := []string{cfg.SMTP.User}
 		emailBody := fmt.Sprintf("Subject: New Enrollment\r\n\r\n"+
@@ -141,14 +153,14 @@ func main() {
 
 		select {
 		case <-time.After(5 * time.Second):
-			log.Error("[WORKER] SMTP connection timed out. NOT commiting offset.")
+			logCtx.Error("[WORKER] SMTP connection timed out. NOT commiting offset.")
 		case err := <-done:
 			if err != nil {
-				log.Error("[WORKER] Failed to send email", "error", err)
+				logCtx.Error("[WORKER] Failed to send email", "error", err)
 			} else {
-				log.Info("[WORKER] Email sent successfully", "to", cfg.SMTP.User)
+				logCtx.Info("[WORKER] Email sent successfully", "to", cfg.SMTP.User)
 				if err := reader.CommitMessages(ctx, msg); err != nil {
-					log.Error("[WORKER] Failed to commit message", "error", err)
+					logCtx.Error("[WORKER] Failed to commit message", "error", err)
 				}
 			}
 		}
@@ -156,4 +168,21 @@ func main() {
 
 	time.Sleep(1 * time.Second)
 	slog.Info("Email Worker stopped gracefully")
+}
+
+func routeToDLQ(ctx context.Context, writer *kafka.Writer, originalMsg kafka.Message, reason string) {
+	dlqMsg := kafka.Message{
+		Key:   originalMsg.Key,
+		Value: originalMsg.Value,
+		Headers: append(originalMsg.Headers, kafka.Header{
+			Key:   "dlq_reason",
+			Value: []byte(reason),
+		}),
+	}
+
+	if err := writer.WriteMessages(ctx, dlqMsg); err != nil {
+		slog.Error("CRITICAL: Failed to write to DLQ", "error", err)
+	} else {
+		slog.Info("Message successfully routed to DLQ", "reason", reason)
+	}
 }
