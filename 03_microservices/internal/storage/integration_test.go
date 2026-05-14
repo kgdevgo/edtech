@@ -94,7 +94,7 @@ func TestEnroll(t *testing.T) {
 		t.Fatalf("failed to create course: %s", err)
 	}
 
-	err = repo.Enroll(ctx, studentID, courseID)
+	err = repo.Enroll(ctx, "test-corr-id", studentID, courseID)
 	if err != nil {
 		t.Fatalf("failed to enroll student: %s", err)
 	}
@@ -124,7 +124,7 @@ func TestProcessPaymentResult_Idempotency(t *testing.T) {
 		studentID, "Idempotency Test", "idempotency@test.com")
 	_, _ = testDB.Exec(`INSERT INTO courses (id, title, duration, price) VALUES ($1, $2, $3, $4)`,
 		courseID, "Idempotency Course", 10, 500)
-	_ = repo.Enroll(ctx, studentID, courseID)
+	_ = repo.Enroll(ctx, "test-corr-id", studentID, courseID)
 
 	// First call
 	err := repo.ProcessPaymentResult(ctx, eventID, "test-corr-id", studentID, courseID, "success")

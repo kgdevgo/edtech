@@ -194,4 +194,7 @@ edtech-app
 # IDE
 .idea/
 .vscode/
-k8s/db-secret.yaml
+
+# K8s Secrets
+**/db-secret.yaml
+**/smtp-secret.yaml
