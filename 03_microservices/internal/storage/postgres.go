@@ -78,7 +78,7 @@ func (s *Storage) CheckStudentExists(ctx context.Context, id string) (bool, erro
 	return exists, nil
 }
 
-func (s *Storage) Enroll(ctx context.Context, studentID, courseID string) error {
+func (s *Storage) Enroll(ctx context.Context, corrID, studentID, courseID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -95,9 +95,10 @@ func (s *Storage) Enroll(ctx context.Context, studentID, courseID string) error 
 
 	eventID := uuid.New().String()
 	payload := events.EnrollmentCreatedPayload{
-		EventID:   eventID,
-		StudentID: studentID,
-		CourseID:  courseID,
+		EventID:       eventID,
+		CorrelationID: corrID,
+		StudentID:     studentID,
+		CourseID:      courseID,
 	}
 
 	if err := insertOutboxEvent(ctx, tx, eventID, events.TopicEnrollmentCreated, payload); err != nil {
@@ -130,7 +131,7 @@ func (s *Storage) GetAllCourses(ctx context.Context) ([]models.Course, error) {
 	return courses, rows.Err()
 }
 
-func (s *Storage) ProcessPaymentResult(ctx context.Context, eventID, studentID, courseID, paymentStatus string) error {
+func (s *Storage) ProcessPaymentResult(ctx context.Context, eventID, corrID, studentID, courseID, paymentStatus string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -165,9 +166,10 @@ func (s *Storage) ProcessPaymentResult(ctx context.Context, eventID, studentID, 
 	if newStatus == "active" {
 		emailEventID := uuid.New().String()
 		payload := map[string]string{
-			"event_id":   emailEventID,
-			"student_id": studentID,
-			"course_id":  courseID,
+			"event_id":       emailEventID,
+			"correlation_id": corrID,
+			"student_id":     studentID,
+			"course_id":      courseID,
 		}
 		if err := insertOutboxEvent(ctx, tx, emailEventID, events.TopicEnrollmentActive, payload); err != nil {
 			return err

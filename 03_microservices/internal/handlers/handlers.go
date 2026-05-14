@@ -28,7 +28,7 @@ type EdtechRepository interface {
 	CreateCourse(ctx context.Context, course *models.Course) error
 	GetAllCourses(ctx context.Context) ([]models.Course, error)
 	CreateStudent(ctx context.Context, student *models.Student) error
-	Enroll(ctx context.Context, studentID, courseID string) error
+	Enroll(ctx context.Context, corrID, studentID, courseID string) error
 	Ping(ctx context.Context) error
 
 	CheckStudentExists(ctx context.Context, id string) (bool, error)
@@ -153,6 +153,10 @@ func (h *Handler) Enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	corrID, _ := ctx.Value(correlationIDKey).(string)
+
+	log := slog.With("correlation_id", corrID)
+
 	var req struct {
 		CourseID string `json:"course_id"`
 	}
@@ -163,9 +167,9 @@ func (h *Handler) Enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("debug enroll", "parsed_student_id", studentID, "parsed_course_id", req.CourseID)
+	log.Info("starting enrollment process", "student_id", studentID, "course_id", req.CourseID)
 
-	if err := h.store.Enroll(ctx, studentID, req.CourseID); err != nil {
+	if err := h.store.Enroll(ctx, corrID, studentID, req.CourseID); err != nil {
 		slog.Error("database error", "op", "Enroll", "error", err)
 
 		if errors.Is(err, context.DeadlineExceeded) {

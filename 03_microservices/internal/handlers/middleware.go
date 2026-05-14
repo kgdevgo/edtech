@@ -13,6 +13,7 @@ type contextKey string
 
 const requestIDKey contextKey = "request_id"
 const userIDKey contextKey = "user_id"
+const correlationIDKey contextKey = "correlation_id"
 
 func (h *Handler) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -56,6 +57,21 @@ func RequestIDMiddleware(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), requestIDKey, reqID)
 
 		w.Header().Set("X-Request-Id", reqID)
+
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func CorrelationIDMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		corrID := r.Header.Get("X-Correlation-Id")
+		if corrID == "" {
+			corrID = uuid.New().String()
+		}
+
+		ctx := context.WithValue(r.Context(), correlationIDKey, corrID)
+
+		w.Header().Set("X-Correlation-Id", corrID)
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

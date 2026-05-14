@@ -10,7 +10,7 @@ import (
 )
 
 type ResultProcessor interface {
-	ProcessPaymentResult(ctx context.Context, eventID, studentID, courseID, paymentStatus string) error
+	ProcessPaymentResult(ctx context.Context, eventID, corrID, studentID, courseID, paymentStatus string) error
 }
 
 type Consumer struct {
@@ -56,6 +56,7 @@ func (c *Consumer) Start(ctx context.Context) {
 		if err := c.db.ProcessPaymentResult(
 			ctx,
 			result.EventID,
+			result.CorrelationID,
 			result.StudentID,
 			result.CourseID,
 			result.Status,

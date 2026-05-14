@@ -133,6 +133,7 @@ func main() {
 	baseStack := []Middleware{
 		handlers.RecoveryMiddleware,
 		handlers.RequestIDMiddleware,
+		handlers.CorrelationIDMiddleware,
 		handlers.LoggingMiddleware,
 	}
 

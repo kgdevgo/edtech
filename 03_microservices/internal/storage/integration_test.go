@@ -127,13 +127,13 @@ func TestProcessPaymentResult_Idempotency(t *testing.T) {
 	_ = repo.Enroll(ctx, studentID, courseID)
 
 	// First call
-	err := repo.ProcessPaymentResult(ctx, eventID, studentID, courseID, "success")
+	err := repo.ProcessPaymentResult(ctx, eventID, "test-corr-id", studentID, courseID, "success")
 	if err != nil {
 		t.Fatalf("First call failed: %v", err)
 	}
 
 	// Second call (should be ignored)
-	err = repo.ProcessPaymentResult(ctx, eventID, studentID, courseID, "success")
+	err = repo.ProcessPaymentResult(ctx, eventID, "test-corr-id", studentID, courseID, "success")
 	if err != nil {
 		t.Fatalf("Second call failed (should be ignored, not error): %v", err)
 	}

@@ -73,7 +73,9 @@ func main() {
 			continue
 		}
 
-		slog.Info("[PAYMENT] Processing payment...", "student_id", cmd.StudentID, "event_id", cmd.EventID)
+		log := slog.With("correlation_id", cmd.CorrelationID)
+
+		log.Info("[PAYMENT] Processing payment...", "student_id", cmd.StudentID, "event_id", cmd.EventID)
 
 		time.Sleep(2 * time.Second)
 
@@ -83,10 +85,11 @@ func main() {
 		}
 
 		result := events.PaymentCompletedPayload{
-			EventID:   cmd.EventID,
-			StudentID: cmd.StudentID,
-			CourseID:  cmd.CourseID,
-			Status:    status,
+			EventID:       cmd.EventID,
+			CorrelationID: cmd.CorrelationID,
+			StudentID:     cmd.StudentID,
+			CourseID:      cmd.CourseID,
+			Status:        status,
 		}
 
 		resultBytes, _ := json.Marshal(result)
@@ -100,16 +103,16 @@ func main() {
 			if writeErr == nil {
 				break
 			}
-			slog.Warn("retrying write to kafka", "attempt", i+1, "error", writeErr)
+			log.Warn("retrying write to kafka", "attempt", i+1, "error", writeErr)
 			time.Sleep(500 * time.Millisecond)
 		}
 
 		if writeErr != nil {
-			slog.Error("failed to write result", "error", writeErr)
+			log.Error("failed to write result", "error", writeErr)
 			continue
 		}
 
-		slog.Info("[PAYMENT] Finished", "status", status, "student_id", cmd.StudentID)
+		log.Info("[PAYMENT] Finished", "status", status, "student_id", cmd.StudentID)
 	}
 
 	slog.Info("Payment service stopped")

@@ -93,6 +93,9 @@ func main() {
 			continue
 		}
 
+		corrID := payload["correlation_id"]
+		log := slog.With("correlation_id", corrID)
+
 		eventID := payload["event_id"]
 		courseID := payload["course_id"]
 		if courseID == "" {
@@ -100,7 +103,7 @@ func main() {
 		}
 
 		if eventID == "" {
-			slog.Error("[WORKER] EventID is empty, rejecting message to maintain idempotency invariant")
+			log.Error("[WORKER] EventID is empty, rejecting message to maintain idempotency invariant")
 			_ = reader.CommitMessages(ctx, msg)
 			continue
 		}
@@ -110,13 +113,13 @@ func main() {
 			eventID,
 		)
 		if err != nil {
-			slog.Error("[WORKER] Failed to check idempotency", "error", err)
+			log.Error("[WORKER] Failed to check idempotency", "error", err)
 			continue
 		}
 
 		affected, _ := res.RowsAffected()
 		if affected == 0 {
-			slog.Info(
+			log.Info(
 				"[WORKER] Duplicate event detected, email already sent. Skipping.",
 				"event_id",
 				eventID,
@@ -124,7 +127,7 @@ func main() {
 			continue
 		}
 
-		slog.Info("[WORKER] Sending email...", "event_id", eventID)
+		log.Info("[WORKER] Sending email...", "event_id", eventID)
 
 		to := []string{cfg.SMTP.User}
 		emailBody := fmt.Sprintf("Subject: New Enrollment\r\n\r\n"+
@@ -138,14 +141,14 @@ func main() {
 
 		select {
 		case <-time.After(5 * time.Second):
-			slog.Error("[WORKER] SMTP connection timed out. NOT commiting offset.")
+			log.Error("[WORKER] SMTP connection timed out. NOT commiting offset.")
 		case err := <-done:
 			if err != nil {
-				slog.Error("[WORKER] Failed to send email", "error", err)
+				log.Error("[WORKER] Failed to send email", "error", err)
 			} else {
-				slog.Info("[WORKER] Email sent successfully", "to", cfg.SMTP.User)
+				log.Info("[WORKER] Email sent successfully", "to", cfg.SMTP.User)
 				if err := reader.CommitMessages(ctx, msg); err != nil {
-					slog.Error("[WORKER] Failed to commit message", "error", err)
+					log.Error("[WORKER] Failed to commit message", "error", err)
 				}
 			}
 		}
