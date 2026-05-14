@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: go-app
-          image: 02_with_pg-app:latest
+          image: 03_with_pg-app:latest
           imagePullPolicy: Never
           ports:
             - containerPort: 8080
